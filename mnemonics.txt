@@ -1,0 +1,12 @@
+setup 
+lady 
+artwork 
+? 
+radar 
+? 
+degree 
+vessel 
+? 
+scissors 
+right 
+question

@@ -26,7 +26,9 @@ GPUSecp::GPUSecp(
     const uint8_t *gTableYCPU,
 		const uint8_t * inputBookPrimeCPU, 
 		const uint8_t * inputBookAffixCPU, 
-    const uint64_t *inputHashBufferCPU
+    const uint64_t *inputHashBufferCPU,
+    int countInputHash,
+    int addrMode
     )
 {
   printf("GPUSecp Starting\n");
@@ -43,7 +45,9 @@ GPUSecp::GPUSecp(
   printf("GPU.BLOCKS_PER_GRID: %d \n", BLOCKS_PER_GRID);
   printf("GPU.THREADS_PER_BLOCK: %d \n", THREADS_PER_BLOCK);
   printf("GPU.CUDA_THREAD_COUNT: %d \n", COUNT_CUDA_THREADS);
-  printf("GPU.countHash160: %d \n", COUNT_INPUT_HASH);
+  this->countInputHash = countInputHash;
+  this->addrMode = addrMode;
+  printf("GPU.countHash160: %d \n", this->countInputHash);
   printf("GPU.countPrime: %d \n", countPrime);
   printf("GPU.countAffix: %d \n", countAffix);
 
@@ -78,8 +82,8 @@ GPUSecp::GPUSecp(
   }
   
   printf("Allocating inputHashBuffer \n");
-  CudaSafeCall(cudaMalloc((void **)&inputHashBufferGPU, COUNT_INPUT_HASH * SIZE_LONG));
-  CudaSafeCall(cudaMemcpy(inputHashBufferGPU, inputHashBufferCPU, COUNT_INPUT_HASH * SIZE_LONG, cudaMemcpyHostToDevice));
+  CudaSafeCall(cudaMalloc((void **)&inputHashBufferGPU, (size_t)this->countInputHash * SIZE_LONG));
+  CudaSafeCall(cudaMemcpy(inputHashBufferGPU, inputHashBufferCPU, (size_t)this->countInputHash * SIZE_LONG, cudaMemcpyHostToDevice));
 
   printf("Allocating gTableX \n");
   CudaSafeCall(cudaMalloc((void **)&gTableXGPU, COUNT_GTABLE_POINTS * SIZE_GTABLE_POINT));
@@ -105,6 +109,100 @@ GPUSecp::GPUSecp(
 
   printf("Allocation Complete \n");
   CudaSafeCall(cudaGetLastError());
+}
+
+// Overloaded constructor for private key list mode
+GPUSecp::GPUSecp(
+    int privListCount,
+    const uint8_t *inputPrivListCPU,
+    const uint8_t *gTableXCPU,
+    const uint8_t *gTableYCPU,
+    const uint64_t *inputHashBufferCPU,
+    int countInputHash,
+    int addrMode
+    )
+{
+  printf("GPUSecp Starting\n");
+
+  int gpuId = 0; // FOR MULTIPLE GPUS EDIT THIS
+  CudaSafeCall(cudaSetDevice(gpuId));
+
+  cudaDeviceProp deviceProp;
+  CudaSafeCall(cudaGetDeviceProperties(&deviceProp, gpuId));
+
+  printf("GPU.gpuId: #%d \n", gpuId);
+  printf("GPU.deviceProp.name: %s \n", deviceProp.name);
+  printf("GPU.multiProcessorCount: %d \n", deviceProp.multiProcessorCount);
+  printf("GPU.BLOCKS_PER_GRID: %d \n", BLOCKS_PER_GRID);
+  printf("GPU.THREADS_PER_BLOCK: %d \n", THREADS_PER_BLOCK);
+  printf("GPU.CUDA_THREAD_COUNT: %d \n", COUNT_CUDA_THREADS);
+  this->countInputHash = countInputHash;
+  this->addrMode = addrMode;
+  printf("GPU.countHash160: %d \n", this->countInputHash);
+
+  countPrivList = privListCount;
+  capPrivList = countPrivList;
+
+  CudaSafeCall(cudaDeviceSetCacheConfig(cudaFuncCachePreferL1));
+  CudaSafeCall(cudaDeviceSetLimit(cudaLimitStackSize, SIZE_CUDA_STACK));
+
+  size_t limit = 0;
+  cudaDeviceGetLimit(&limit, cudaLimitStackSize);
+  printf("cudaLimitStackSize: %u\n", (unsigned)limit);
+  cudaDeviceGetLimit(&limit, cudaLimitPrintfFifoSize);
+  printf("cudaLimitPrintfFifoSize: %u\n", (unsigned)limit);
+  cudaDeviceGetLimit(&limit, cudaLimitMallocHeapSize);
+  printf("cudaLimitMallocHeapSize: %u\n", (unsigned)limit);
+
+  // No books/combos in this mode; allocate only priv list
+  printf("Allocating inputPrivList (%d keys) \n", countPrivList);
+  size_t bytes = (size_t)max(1, countPrivList) * SIZE_PRIV_KEY;
+  CudaSafeCall(cudaMalloc((void **)&inputPrivListGPU, bytes));
+  if (countPrivList > 0) {
+    CudaSafeCall(cudaMemcpy(inputPrivListGPU, inputPrivListCPU, (size_t)countPrivList * SIZE_PRIV_KEY, cudaMemcpyHostToDevice));
+  }
+
+  printf("Allocating inputHashBuffer \n");
+  CudaSafeCall(cudaMalloc((void **)&inputHashBufferGPU, (size_t)this->countInputHash * SIZE_LONG));
+  CudaSafeCall(cudaMemcpy(inputHashBufferGPU, inputHashBufferCPU, (size_t)this->countInputHash * SIZE_LONG, cudaMemcpyHostToDevice));
+
+  printf("Allocating gTableX \n");
+  CudaSafeCall(cudaMalloc((void **)&gTableXGPU, COUNT_GTABLE_POINTS * SIZE_GTABLE_POINT));
+  CudaSafeCall(cudaMemset(gTableXGPU, 0, COUNT_GTABLE_POINTS * SIZE_GTABLE_POINT));
+  CudaSafeCall(cudaMemcpy(gTableXGPU, gTableXCPU, COUNT_GTABLE_POINTS * SIZE_GTABLE_POINT, cudaMemcpyHostToDevice));
+
+  printf("Allocating gTableY \n");
+  CudaSafeCall(cudaMalloc((void **)&gTableYGPU, COUNT_GTABLE_POINTS * SIZE_GTABLE_POINT));
+  CudaSafeCall(cudaMemset(gTableYGPU, 0, COUNT_GTABLE_POINTS * SIZE_GTABLE_POINT));
+  CudaSafeCall(cudaMemcpy(gTableYGPU, gTableYCPU, COUNT_GTABLE_POINTS * SIZE_GTABLE_POINT, cudaMemcpyHostToDevice));
+
+  printf("Allocating outputBuffer \n");
+  CudaSafeCall(cudaMalloc((void **)&outputBufferGPU, COUNT_CUDA_THREADS));
+  CudaSafeCall(cudaHostAlloc(&outputBufferCPU, COUNT_CUDA_THREADS, cudaHostAllocWriteCombined | cudaHostAllocMapped));
+
+  printf("Allocating outputHashes \n");
+  CudaSafeCall(cudaMalloc((void **)&outputHashesGPU, COUNT_CUDA_THREADS * SIZE_HASH160));
+  CudaSafeCall(cudaHostAlloc(&outputHashesCPU, COUNT_CUDA_THREADS * SIZE_HASH160, cudaHostAllocWriteCombined | cudaHostAllocMapped));
+
+  printf("Allocating outputPrivKeys \n");
+  CudaSafeCall(cudaMalloc((void **)&outputPrivKeysGPU, COUNT_CUDA_THREADS * SIZE_PRIV_KEY));
+  CudaSafeCall(cudaHostAlloc(&outputPrivKeysCPU, COUNT_CUDA_THREADS * SIZE_PRIV_KEY, cudaHostAllocWriteCombined | cudaHostAllocMapped));
+
+  printf("Allocation Complete \n");
+  CudaSafeCall(cudaGetLastError());
+}
+
+void GPUSecp::setPrivList(const uint8_t * inputPrivListCPU, int newCount) {
+  // Realloc if capacity is insufficient
+  if (newCount > capPrivList) {
+    if (inputPrivListGPU) CudaSafeCall(cudaFree(inputPrivListGPU));
+    capPrivList = newCount;
+    CudaSafeCall(cudaMalloc((void **)&inputPrivListGPU, (size_t)capPrivList * SIZE_PRIV_KEY));
+  }
+  if (newCount > 0) {
+    CudaSafeCall(cudaMemcpy(inputPrivListGPU, inputPrivListCPU, (size_t)newCount * SIZE_PRIV_KEY, cudaMemcpyHostToDevice));
+  }
+  countPrivList = newCount;
 }
 
 //Cuda Secp256k1 Point Multiplication
@@ -151,7 +249,7 @@ __device__ void _PointMultiSecp256k1(uint64_t *qx, uint64_t *qy, uint16_t *privK
 __global__ void
 CudaRunSecp256k1Books(
     int iteration, uint8_t * gTableXGPU, uint8_t * gTableYGPU,
-    uint8_t *inputBookPrimeGPU, uint8_t *inputBookAffixGPU, uint64_t *inputHashBufferGPU,
+    uint8_t *inputBookPrimeGPU, uint8_t *inputBookAffixGPU, uint64_t *inputHashBufferGPU, int countInputHash, int addrMode,
     uint8_t *outputBufferGPU, uint8_t *outputHashesGPU, uint8_t *outputPrivKeysGPU) {
 
   //Load affix word from global memory based on thread index
@@ -175,38 +273,41 @@ CudaRunSecp256k1Books(
     uint8_t hash160[SIZE_HASH160];
     uint64_t hash160Last8Bytes;
 
-    _GetHash160Comp(qx, (uint8_t)(qy[0] & 1), hash160);
-    GET_HASH_LAST_8_BYTES(hash160Last8Bytes, hash160);
-
-    if (_BinarySearch(inputHashBufferGPU, COUNT_INPUT_HASH, hash160Last8Bytes) >= 0) {
-      int idxCudaThread = IDX_CUDA_THREAD;
-      outputBufferGPU[idxCudaThread] += 1;
-      for (int i = 0; i < SIZE_HASH160; i++) {
-        outputHashesGPU[(idxCudaThread * SIZE_HASH160) + i] = hash160[i];
+    if (addrMode == 1) {
+      _GetHash160P2SHComp(qx, (uint8_t)(qy[0] & 1), hash160);
+      GET_HASH_LAST_8_BYTES(hash160Last8Bytes, hash160);
+      if (_BinarySearch(inputHashBufferGPU, countInputHash, hash160Last8Bytes) >= 0) {
+        int idxCudaThread = IDX_CUDA_THREAD;
+        outputBufferGPU[idxCudaThread] += 1;
+        for (int i = 0; i < SIZE_HASH160; i++) outputHashesGPU[(idxCudaThread * SIZE_HASH160) + i] = hash160[i];
+        for (int i = 0; i < SIZE_PRIV_KEY; i++) outputPrivKeysGPU[(idxCudaThread * SIZE_PRIV_KEY) + i] = privKey[i];
       }
-      for (int i = 0; i < SIZE_PRIV_KEY; i++) {
-        outputPrivKeysGPU[(idxCudaThread * SIZE_PRIV_KEY) + i] = privKey[i];
+    } else {
+      _GetHash160Comp(qx, (uint8_t)(qy[0] & 1), hash160);
+      GET_HASH_LAST_8_BYTES(hash160Last8Bytes, hash160);
+      if (_BinarySearch(inputHashBufferGPU, countInputHash, hash160Last8Bytes) >= 0) {
+        int idxCudaThread = IDX_CUDA_THREAD;
+        outputBufferGPU[idxCudaThread] += 1;
+        for (int i = 0; i < SIZE_HASH160; i++) outputHashesGPU[(idxCudaThread * SIZE_HASH160) + i] = hash160[i];
+        for (int i = 0; i < SIZE_PRIV_KEY; i++) outputPrivKeysGPU[(idxCudaThread * SIZE_PRIV_KEY) + i] = privKey[i];
       }
     }
     
-    _GetHash160(qx, qy, hash160);
-    GET_HASH_LAST_8_BYTES(hash160Last8Bytes, hash160);
-
-    if (_BinarySearch(inputHashBufferGPU, COUNT_INPUT_HASH, hash160Last8Bytes) >= 0) {
-      int idxCudaThread = IDX_CUDA_THREAD;
-      outputBufferGPU[idxCudaThread] += 1;
-      for (int i = 0; i < SIZE_HASH160; i++) {
-        outputHashesGPU[(idxCudaThread * SIZE_HASH160) + i] = hash160[i];
-      }
-      for (int i = 0; i < SIZE_PRIV_KEY; i++) {
-        outputPrivKeysGPU[(idxCudaThread * SIZE_PRIV_KEY) + i] = privKey[i];
+    if (addrMode == 0) {
+      _GetHash160(qx, qy, hash160);
+      GET_HASH_LAST_8_BYTES(hash160Last8Bytes, hash160);
+      if (_BinarySearch(inputHashBufferGPU, countInputHash, hash160Last8Bytes) >= 0) {
+        int idxCudaThread = IDX_CUDA_THREAD;
+        outputBufferGPU[idxCudaThread] += 1;
+        for (int i = 0; i < SIZE_HASH160; i++) outputHashesGPU[(idxCudaThread * SIZE_HASH160) + i] = hash160[i];
+        for (int i = 0; i < SIZE_PRIV_KEY; i++) outputPrivKeysGPU[(idxCudaThread * SIZE_PRIV_KEY) + i] = privKey[i];
       }
     }
   }
 }
 
 __global__ void CudaRunSecp256k1Combo(
-    int8_t * inputComboGPU, uint8_t * gTableXGPU, uint8_t * gTableYGPU, uint64_t *inputHashBufferGPU,
+    int8_t * inputComboGPU, uint8_t * gTableXGPU, uint8_t * gTableYGPU, uint64_t *inputHashBufferGPU, int countInputHash, int addrMode,
     uint8_t *outputBufferGPU, uint8_t *outputHashesGPU, uint8_t *outputPrivKeysGPU) {
 
   int8_t combo[SIZE_COMBO_MULTI] = {};
@@ -226,10 +327,14 @@ __global__ void CudaRunSecp256k1Combo(
       uint8_t hash160[SIZE_HASH160];
       uint64_t hash160Last8Bytes;
 
-      _GetHash160Comp(qx, (uint8_t)(qy[0] & 1), hash160);
+      if (addrMode == 1) {
+        _GetHash160P2SHComp(qx, (uint8_t)(qy[0] & 1), hash160);
+      } else {
+        _GetHash160Comp(qx, (uint8_t)(qy[0] & 1), hash160);
+      }
       GET_HASH_LAST_8_BYTES(hash160Last8Bytes, hash160);
 
-      if (_BinarySearch(inputHashBufferGPU, COUNT_INPUT_HASH, hash160Last8Bytes) >= 0) {
+      if (_BinarySearch(inputHashBufferGPU, countInputHash, hash160Last8Bytes) >= 0) {
         int idxCudaThread = IDX_CUDA_THREAD;
         outputBufferGPU[idxCudaThread] += 1;
         for (int i = 0; i < SIZE_HASH160; i++) {
@@ -240,10 +345,12 @@ __global__ void CudaRunSecp256k1Combo(
         }
       }
       
-      _GetHash160(qx, qy, hash160);
+      if (addrMode == 0) {
+        _GetHash160(qx, qy, hash160);
+      }
       GET_HASH_LAST_8_BYTES(hash160Last8Bytes, hash160);
 
-      if (_BinarySearch(inputHashBufferGPU, COUNT_INPUT_HASH, hash160Last8Bytes) >= 0) {
+      if (addrMode == 0 && _BinarySearch(inputHashBufferGPU, countInputHash, hash160Last8Bytes) >= 0) {
         int idxCudaThread = IDX_CUDA_THREAD;
         outputBufferGPU[idxCudaThread] += 1;
         for (int i = 0; i < SIZE_HASH160; i++) {
@@ -257,6 +364,61 @@ __global__ void CudaRunSecp256k1Combo(
   }
 }
 
+// Kernel: consume a list of ready 32-byte private keys from global memory
+__global__ void CudaRunSecp256k1PrivList(
+    int iteration, uint8_t * gTableXGPU, uint8_t * gTableYGPU,
+    uint8_t *inputPrivListGPU, int countPrivList, uint64_t *inputHashBufferGPU, int countInputHash, int addrMode,
+    uint8_t *outputBufferGPU, uint8_t *outputHashesGPU, uint8_t *outputPrivKeysGPU) {
+
+  int idxGlobal = (COUNT_CUDA_THREADS * iteration) + IDX_CUDA_THREAD;
+  if (idxGlobal >= countPrivList) return;
+
+  uint8_t privKey[SIZE_PRIV_KEY];
+  #pragma unroll
+  for (int i = 0; i < SIZE_PRIV_KEY; i++) {
+    privKey[i] = inputPrivListGPU[(idxGlobal * SIZE_PRIV_KEY) + i];
+  }
+
+  uint64_t qx[4];
+  uint64_t qy[4];
+  _PointMultiSecp256k1(qx, qy, (uint16_t *)privKey, gTableXGPU, gTableYGPU);
+
+  uint8_t hash160[SIZE_HASH160];
+  uint64_t hash160Last8Bytes;
+
+  if (addrMode == 1) {
+    _GetHash160P2SHComp(qx, (uint8_t)(qy[0] & 1), hash160);
+  } else {
+    _GetHash160Comp(qx, (uint8_t)(qy[0] & 1), hash160);
+  }
+  GET_HASH_LAST_8_BYTES(hash160Last8Bytes, hash160);
+  if (_BinarySearch(inputHashBufferGPU, countInputHash, hash160Last8Bytes) >= 0) {
+    int idxCudaThread = IDX_CUDA_THREAD;
+    outputBufferGPU[idxCudaThread] += 1;
+    for (int i = 0; i < SIZE_HASH160; i++) {
+      outputHashesGPU[(idxCudaThread * SIZE_HASH160) + i] = hash160[i];
+    }
+    for (int i = 0; i < SIZE_PRIV_KEY; i++) {
+      outputPrivKeysGPU[(idxCudaThread * SIZE_PRIV_KEY) + i] = privKey[i];
+    }
+  }
+
+  if (addrMode == 0) {
+    _GetHash160(qx, qy, hash160);
+    GET_HASH_LAST_8_BYTES(hash160Last8Bytes, hash160);
+    if (_BinarySearch(inputHashBufferGPU, countInputHash, hash160Last8Bytes) >= 0) {
+      int idxCudaThread = IDX_CUDA_THREAD;
+      outputBufferGPU[idxCudaThread] += 1;
+      for (int i = 0; i < SIZE_HASH160; i++) {
+        outputHashesGPU[(idxCudaThread * SIZE_HASH160) + i] = hash160[i];
+      }
+      for (int i = 0; i < SIZE_PRIV_KEY; i++) {
+        outputPrivKeysGPU[(idxCudaThread * SIZE_PRIV_KEY) + i] = privKey[i];
+      }
+    }
+  }
+}
+
 
 void GPUSecp::doIterationSecp256k1Books(int iteration) {
   CudaSafeCall(cudaMemset(outputBufferGPU, 0, COUNT_CUDA_THREADS));
@@ -265,7 +427,7 @@ void GPUSecp::doIterationSecp256k1Books(int iteration) {
 
   CudaRunSecp256k1Books<<<BLOCKS_PER_GRID, THREADS_PER_BLOCK>>>(
     iteration, gTableXGPU, gTableYGPU,
-    inputBookPrimeGPU, inputBookAffixGPU, inputHashBufferGPU,
+    inputBookPrimeGPU, inputBookAffixGPU, inputHashBufferGPU, countInputHash, addrMode,
     outputBufferGPU, outputHashesGPU, outputPrivKeysGPU);
 
   CudaSafeCall(cudaMemcpy(outputBufferCPU, outputBufferGPU, COUNT_CUDA_THREADS, cudaMemcpyDeviceToHost));
@@ -283,7 +445,22 @@ void GPUSecp::doIterationSecp256k1Combo(int8_t * inputComboCPU) {
   CudaSafeCall(cudaGetLastError());
 
   CudaRunSecp256k1Combo<<<BLOCKS_PER_GRID, THREADS_PER_BLOCK>>>(
-    inputComboGPU, gTableXGPU, gTableYGPU, inputHashBufferGPU,
+    inputComboGPU, gTableXGPU, gTableYGPU, inputHashBufferGPU, countInputHash, addrMode,
+    outputBufferGPU, outputHashesGPU, outputPrivKeysGPU);
+
+  CudaSafeCall(cudaMemcpy(outputBufferCPU, outputBufferGPU, COUNT_CUDA_THREADS, cudaMemcpyDeviceToHost));
+  CudaSafeCall(cudaMemcpy(outputHashesCPU, outputHashesGPU, COUNT_CUDA_THREADS * SIZE_HASH160, cudaMemcpyDeviceToHost));
+  CudaSafeCall(cudaMemcpy(outputPrivKeysCPU, outputPrivKeysGPU, COUNT_CUDA_THREADS * SIZE_PRIV_KEY, cudaMemcpyDeviceToHost));
+  CudaSafeCall(cudaGetLastError());
+}
+
+void GPUSecp::doIterationSecp256k1PrivList(int iteration) {
+  CudaSafeCall(cudaMemset(outputBufferGPU, 0, COUNT_CUDA_THREADS));
+  CudaSafeCall(cudaMemset(outputHashesGPU, 0, COUNT_CUDA_THREADS * SIZE_HASH160));
+  CudaSafeCall(cudaMemset(outputPrivKeysGPU, 0, COUNT_CUDA_THREADS * SIZE_PRIV_KEY));
+
+  CudaRunSecp256k1PrivList<<<BLOCKS_PER_GRID, THREADS_PER_BLOCK>>>(
+    iteration, gTableXGPU, gTableYGPU, inputPrivListGPU, countPrivList, inputHashBufferGPU, countInputHash, addrMode,
     outputBufferGPU, outputHashesGPU, outputPrivKeysGPU);
 
   CudaSafeCall(cudaMemcpy(outputBufferCPU, outputBufferGPU, COUNT_CUDA_THREADS, cudaMemcpyDeviceToHost));

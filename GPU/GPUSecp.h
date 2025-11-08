@@ -31,7 +31,8 @@
 #define AFFIX_IS_SUFFIX true
 
 //This is how many hashes are in NAME_HASH_FOLDER, Defined as constant to save one register in device kernel
-#define COUNT_INPUT_HASH 204
+// Count of input hashes will be determined at runtime from file length
+// and passed down to GPU kernels; avoid hard-coded constants.
 
 //This is how many prime words are in NAME_INPUT_PRIME file, Defined as constant to save one register in device kernel
 #define COUNT_INPUT_PRIME 100
@@ -120,13 +121,30 @@ public:
 		const uint8_t * gTableYCPU,
 		const uint8_t * inputBookPrimeCPU, 
 		const uint8_t * inputBookAffixCPU, 
-		const uint64_t * inputHashBufferCPU
+		const uint64_t * inputHashBufferCPU,
+		int countInputHash,
+		int addrMode
+		);
+
+	// Overload: build from a list of private keys (each 32 bytes)
+	GPUSecp(
+		int privListCount,
+		const uint8_t * inputPrivListCPU,
+		const uint8_t * gTableXCPU,
+		const uint8_t * gTableYCPU,
+		const uint64_t * inputHashBufferCPU,
+		int countInputHash,
+		int addrMode
 		);
 
 	void doIterationSecp256k1Books(int iteration);
 	void doIterationSecp256k1Combo(int8_t * inputComboCPU);
+	void doIterationSecp256k1PrivList(int iteration);
 	void doPrintOutput();
 	void doFreeMemory();
+
+	// Stream batches: update private key list for priv-list mode
+	void setPrivList(const uint8_t * inputPrivListCPU, int newCount);
 
 private:
 	//Input combo buffer, used only in Combo Mode, defines the starting position for each thread
@@ -141,6 +159,9 @@ private:
 
 	//Input buffer that holds Affix wordlist in global memory of the GPU device
 	uint8_t * inputBookAffixGPU;
+
+	//Input buffer that holds pre-computed 32-byte private keys in global memory
+	uint8_t * inputPrivListGPU;
 
 	//Input buffer that holds merged-sorted-unique-8-byte-hashes in global memory of the GPU device
 	uint64_t * inputHashBufferGPU;
@@ -159,6 +180,12 @@ private:
 	//Each private key is 32-byte number that was the output of SHA256
 	uint8_t * outputPrivKeysGPU;
 	uint8_t * outputPrivKeysCPU;
+
+	// total counts (dynamic)
+	int countPrivList;
+	int capPrivList;
+	int countInputHash;
+	int addrMode; // 0=P2PKH, 1=P2SH-P2WPKH, 2=P2WPKH
 };
 
 

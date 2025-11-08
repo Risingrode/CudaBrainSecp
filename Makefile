@@ -13,21 +13,28 @@ OBJET = $(addprefix $(OBJDIR)/, \
 		CPU/Int.o \
 		CPU/IntMod.o \
 		CPU/SECP256K1.o \
+        CPU/BIP39.o \
         CudaBrainSecp.o \
 )
 
-CCAP      = 86
+# Target GPU architectures (space-separated SM versions).
+# Default supports Tesla T4 (sm_75) and RTX 30-series (sm_86).
+SMS      ?= 75 86
 CUDA	  = /usr/local/cuda-11.7
 CXX       = g++
 CXXCUDA   = /usr/bin/g++
-CXXFLAGS  = -DWITHGPU -m64 -mssse3 -Wno-write-strings -O2 -I. -I$(CUDA)/include
-LFLAGS    = -lgmp -lpthread -L$(CUDA)/lib64 -lcudart
+# Enable C++17 for std::filesystem and related features
+CXXFLAGS  = -DWITHGPU -m64 -mssse3 -Wno-write-strings -O3 -march=native -std=c++17 -fopenmp -I. -I$(CUDA)/include
+LFLAGS    = -lgmp -lpthread -fopenmp -L$(CUDA)/lib64 -lcudart
 NVCC      = $(CUDA)/bin/nvcc
+
+# Compose -gencode flags from SMS
+NVCC_GENCODE := $(foreach sm,$(SMS),-gencode=arch=compute_$(sm),code=sm_$(sm))
 
 #--------------------------------------------------------------------
 
 $(OBJDIR)/GPU/GPUSecp.o: GPU/GPUSecp.cu
-	$(NVCC) --compile --compiler-options -fPIC -ccbin $(CXXCUDA) -m64 -O2 -I$(CUDA)/include -gencode=arch=compute_$(CCAP),code=sm_$(CCAP) -o $(OBJDIR)/GPU/GPUSecp.o -c GPU/GPUSecp.cu
+	$(NVCC) --compile --compiler-options -fPIC -ccbin $(CXXCUDA) -m64 -O2 -I$(CUDA)/include $(NVCC_GENCODE) -o $(OBJDIR)/GPU/GPUSecp.o -c GPU/GPUSecp.cu
 
 $(OBJDIR)/%.o : %.cpp
 	$(CXX) $(CXXFLAGS) -o $@ -c $<
@@ -55,4 +62,3 @@ $(OBJDIR)/CPU: $(OBJDIR)
 clean:
 	@echo Cleaning...
 	@rm -rf obj || true
-
